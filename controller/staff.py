@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from utils.mongodb import db
+from fastapi.responses import JSONResponse
 from models.user import UserInDB
 from models.staff_sale import StaffSaleCreate, StaffSale
 from models.booking import BookingCreate, Booking
