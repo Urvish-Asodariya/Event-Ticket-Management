@@ -11,10 +11,7 @@ from utils.security import (
 from utils.mongodb import db
 from models.user import UserCreate, User, UserLogin
 
-router = APIRouter()
 
-
-@router.post("/register", response_model=User)
 async def register(user: UserCreate, request: Request):
 
     if await db.users.find_one({"email": str(user.email)}):
@@ -33,8 +30,6 @@ async def register(user: UserCreate, request: Request):
     else:
         return JSONResponse({"message": "User registration failed"})
 
-
-@router.post("/login")
 async def login(request: Request, credentials: UserLogin):
     try:
         email = credentials.email
@@ -73,7 +68,5 @@ async def login(request: Request, credentials: UserLogin):
             content={"status": False, "data": "Internal Server Error"},
         )
 
-
-@router.post("/verify-otp")
-async def verify_otp(phone: str, otp: str):
+async def verify_otp_controller(phone: str, otp: str):
     return {"status": "success", "message": "OTP verified successfully"}

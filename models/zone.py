@@ -9,7 +9,7 @@ class ZoneBase(BaseModel):
 class ZoneCreate(ZoneBase):
     name: str
     description: Optional[str] = None
-    created_by: str 
+    created_by: Optional[str] = None
 
 class ZoneInDB(ZoneBase):
     id: str = Field(..., alias="_id")

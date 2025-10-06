@@ -1,14 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from controller import auth, passes, bookings, staff, admin, validation, zone
+from router import auth, passes, booking, staff_sale, admin, validation, zone
 from contextlib import asynccontextmanager
+
 
 @asynccontextmanager
 async def startup_event():
     try:
-        print( "Starting up..." )
+        print("Starting up...")
     except Exception as e:
-        print( "Error: " , e)
+        print("Error: ", e)
 
 
 app = FastAPI(
@@ -29,8 +30,8 @@ app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(zone.router, prefix="/zone", tags=["Zone"])
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(passes.router, prefix="/passes", tags=["Passes"])
-app.include_router(bookings.router, prefix="/bookings", tags=["Bookings"])
-app.include_router(staff.router, prefix="/staff", tags=["Staff"])
+app.include_router(booking.router, prefix="/bookings", tags=["Bookings"])
+app.include_router(staff_sale.router, prefix="/staff", tags=["Staff"])
 app.include_router(validation.router, prefix="/validate", tags=["Validation"])
 
 
@@ -45,4 +46,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

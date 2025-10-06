@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from utils.mongodb import db
+from fastapi.responses import JSONResponse
 from models.booking import BookingCreate, BookingInDB, Booking, BookingUpdate
 from models.user import UserInDB
 from utils.security import get_current_user
@@ -8,14 +9,10 @@ from utils.qr_service import generate_qr_code
 from bson import ObjectId
 import qrcode
 import base64
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from io import BytesIO
 
-router = APIRouter()
-
-
-@router.post("/", response_model=Booking)
-async def create_booking(
+async def create_booking_controller(
     booking: BookingCreate, current_user: UserInDB = Depends(get_current_user)
 ):
     pass_ = await db["passes"].find_one({"_id": ObjectId(booking.pass_id)})
@@ -64,13 +61,13 @@ async def create_booking(
     qr_img.save(buffered, format="PNG")
     booking_dict["qr_code"] = base64.b64encode(buffered.getvalue()).decode()
 
-    await db["bookings"].insert_one(booking_dict)
-    booking_dict["_id"] = str(booking_dict["_id"])
-    return Booking(**booking_dict)
+    booking = await db["bookings"].insert_one(booking_dict)
+    if booking.inserted_id:
+        return JSONResponse({"message": "Booking created successfully"})
+    else:
+        return JSONResponse({"message": "Booking creation failed"})
 
-
-@router.get("/{booking_id}", response_model=Booking)
-async def get_booking(
+async def get_booking_controller(
     booking_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
 
@@ -88,9 +85,7 @@ async def get_booking(
 
     return Booking(**booking)
 
-
-@router.post("/cancel/{booking_id}", response_model=Booking)
-async def cancel_booking(
+async def cancel_booking_controller(
     booking_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
 
@@ -113,12 +108,12 @@ async def cancel_booking(
         {"_id": ObjectId(booking_id)}, {"$set": {"status": "cancelled"}}
     )
 
-    booking["status"] = "cancelled"
-    return Booking(**booking)
+    if result.modified_count == 1:
+        return JSONResponse({"message": "Booking cancelled successfully"})
+    else:
+        return JSONResponse({"message": "Booking cancellation failed"})
 
-
-@router.get("/user/{user_id}", response_model=List[Booking])
-async def get_user_bookings(
+async def get_user_bookings_controller(
     user_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
     # Check if user is requesting their own bookings or is staff/admin

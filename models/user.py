@@ -20,9 +20,6 @@ class UserCreate(UserBase):
     password: str
     role: UserRole
     zone_id: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
-    is_deleted: bool = Field(default=False)
 
 
 class UserInDB(UserBase):
@@ -45,7 +42,6 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     id: str = Field(..., alias="_id")
     role: UserRole
-    created_at: datetime
 
 class UserLogin(BaseModel):
     email: str 

@@ -1,20 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import HTTPException
+from bson import ObjectId
+from typing import Dict
 from utils.mongodb import db
 from models.user import UserInDB
 from models.booking import BookingStatus
-from utils.security import get_current_user
-from bson import ObjectId
+from datetime import datetime
 
-router = APIRouter()
-
-
-
-@router.post("/validate-qr")
-async def validate_qr_code(
-    qr_code: str,
-    current_user: UserInDB = Depends(get_current_user)
-):
-
+async def validate_qr_controller(qr_code: str, current_user: UserInDB) -> Dict:
     if current_user.role not in ["staff", "admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
@@ -23,7 +15,7 @@ async def validate_qr_code(
         raise HTTPException(status_code=404, detail="Invalid QR code")
 
     if current_user.role == "staff":
-        staff_zone = current_user.zone_id if hasattr(current_user, "zone_id") else None
+        staff_zone = getattr(current_user, "zone_id", None)
         if not staff_zone:
             raise HTTPException(status_code=400, detail="Staff zone not assigned")
         if str(staff_zone) != str(booking.get("zone_id")):
@@ -65,13 +57,7 @@ async def validate_qr_code(
     }
 
 
-@router.post("/validate-group-entry/{booking_id}/{member_index}")
-async def validate_group_member_entry(
-    booking_id: str,
-    member_index: int,
-    current_user: UserInDB = Depends(get_current_user)
-):
-
+async def validate_group_member_entry_controller(booking_id: str, member_index: int, current_user: UserInDB) -> Dict:
     if current_user.role not in ["staff", "admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
@@ -80,7 +66,7 @@ async def validate_group_member_entry(
         raise HTTPException(status_code=404, detail="Invalid or non-group booking")
 
     if current_user.role == "staff":
-        staff_zone = current_user.zone_id if hasattr(current_user, "zone_id") else None
+        staff_zone = getattr(current_user, "zone_id", None)
         if not staff_zone:
             raise HTTPException(status_code=400, detail="Staff zone not assigned")
         if str(staff_zone) != str(booking.get("zone_id")):
@@ -92,24 +78,16 @@ async def validate_group_member_entry(
     group_members = booking.get("group_members", [])
     if member_index >= len(group_members):
         raise HTTPException(status_code=400, detail="Invalid member index")
-
     if group_members[member_index]["entry_status"]:
         raise HTTPException(status_code=400, detail="Member already entered")
 
     update_path = f"group_members.{member_index}.entry_status"
-    await db["bookings"].update_one(
-        {"_id": ObjectId(booking_id)},
-        {"$set": {update_path: True}}
-    )
-
+    await db["bookings"].update_one({"_id": ObjectId(booking_id)}, {"$set": {update_path: True}})
     group_members[member_index]["entry_status"] = True
-    all_entered = all(m["entry_status"] for m in group_members)
 
+    all_entered = all(m["entry_status"] for m in group_members)
     if all_entered:
-        await db["bookings"].update_one(
-            {"_id": ObjectId(booking_id)},
-            {"$set": {"status": BookingStatus.USED}}
-        )
+        await db["bookings"].update_one({"_id": ObjectId(booking_id)}, {"$set": {"status": BookingStatus.USED}})
 
     return {
         "success": True,
