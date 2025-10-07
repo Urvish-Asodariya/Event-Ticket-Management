@@ -2,7 +2,7 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from bson import ObjectId
 from fastapi import HTTPException
-
+from utils.serializers import serialize_doc, serialize_list, remove_password
 from utils.mongodb import db
 from models.user import UserInDB
 from models.zone import Zone
@@ -13,18 +13,22 @@ from models.booking import Booking
 # -------------------- Users & Staff --------------------
 async def list_users_controller(skip: int = 0, limit: int = 100) -> List[Dict]:
     users = await db["users"].find({"role": "user"}).skip(skip).limit(limit).to_list(None)
+    users = serialize_list(users)
+    users = remove_password(users)
     return users
 
 
 async def list_staffs_controller(skip: int = 0, limit: int = 100) -> List[Dict]:
     staffs = await db["users"].find({"role": "staff"}).skip(skip).limit(limit).to_list(None)
+    staffs = serialize_list(staffs)
+    staffs = remove_password(staffs)
     return staffs
 
 
 # -------------------- Zones --------------------
 async def list_zones_controller() -> List[Dict]:
     zones = await db.zones.find().to_list(None)
-    return zones
+    return serialize_list(zones)
 
 
 # -------------------- Staff Sales Report --------------------
@@ -50,7 +54,7 @@ async def get_staff_sales_report_controller(start_date: Optional[datetime] = Non
         {"$lookup": {"from": "users", "localField": "_id", "foreignField": "_id", "as": "staff_info"}},
     ]
     staff_sales = await db["staff_sales"].aggregate(pipeline).to_list(None)
-    return staff_sales
+    return serialize_list(staff_sales)
 
 
 # -------------------- Stats --------------------
@@ -78,6 +82,11 @@ async def get_stats_controller(period: str = "today") -> Dict:
     ]
 
     stats = await db["bookings"].aggregate(pipeline).to_list(None)
+    if stats:
+        result = stats[0]
+        result.pop("_id", None)  
+        return result
+    
     return stats[0] if stats else {
         "total_bookings": 0,
         "total_revenue": 0,
@@ -106,7 +115,7 @@ async def create_discount_controller(discount: DiscountCreate) -> Discount:
     discount_dict["zone_id"] = discount_dict.get("zone_id")
 
     await db["discounts"].insert_one(discount_dict)
-    return Discount(**discount_dict)
+    return serialize_doc(discount_dict)
 
 
 async def get_discounts_controller(zone_id: Optional[str] = None) -> List[Dict]:
@@ -114,7 +123,7 @@ async def get_discounts_controller(zone_id: Optional[str] = None) -> List[Dict]:
     if zone_id:
         query["zone_id"] = zone_id
     discounts = await db["discounts"].find(query).to_list(None)
-    return discounts
+    return serialize_list(discounts)
 
 
 # -------------------- Bookings --------------------
@@ -123,7 +132,7 @@ async def get_group_bookings_controller(status: Optional[str] = None) -> List[Di
     if status:
         query["status"] = status
     group_bookings = await db["bookings"].find(query).to_list(None)
-    return group_bookings
+    return serialize_list(group_bookings)
 
 
 async def get_all_bookings_controller(zone_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
@@ -133,4 +142,4 @@ async def get_all_bookings_controller(zone_id: Optional[str] = None, status: Opt
     if status:
         query["status"] = status
     bookings = await db["bookings"].find(query).to_list(None)
-    return bookings
+    return serialize_list(bookings)

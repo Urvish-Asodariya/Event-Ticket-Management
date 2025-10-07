@@ -9,28 +9,81 @@ from utils.qr_service import generate_qr_code
 from bson import ObjectId
 import qrcode
 import base64
+from utils.serializers import serialize_doc, serialize_list
 from datetime import datetime
 from io import BytesIO
 
+
 async def create_booking_controller(
-    booking: BookingCreate, current_user: UserInDB = Depends(get_current_user)
+    pass_id: str,
+    booking: BookingCreate,
+    current_user: UserInDB = Depends(get_current_user),
 ):
-    pass_ = await db["passes"].find_one({"_id": ObjectId(booking.pass_id)})
-    if not pass_ or not pass_["is_active"]:
-        raise HTTPException(status_code=404, detail="Pass not found or inactive")
 
-    if booking.zone_id != pass_["zone_id"]:
-        raise HTTPException(status_code=400, detail="Zone mismatch with pass")
+    pass_ = await db["passes"].find_one({"_id": ObjectId(pass_id)})
+    if not pass_:
+        raise HTTPException(status_code=404, detail="Pass not found")
 
-    amount = pass_["price"]
-    if booking.discount_applied:
+    if not pass_.get("is_active", False):
+        raise HTTPException(status_code=400, detail="Pass is inactive")
+
+    now = datetime.utcnow()
+    validity_start = pass_.get("validity_start")
+    validity_end = pass_.get("validity_end")
+
+    if validity_end and now > validity_end:
+        raise HTTPException(status_code=400, detail="Pass validity has expired")
+
+    group_size_allowed = pass_.get("group_size", 0)
+    booking_is_group = group_size_allowed > 1
+
+    quantity_requested = 1
+    if booking_is_group:
+        if not booking.group_members or len(booking.group_members) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Group members required for group booking",
+            )
+        quantity_requested = len(booking.group_members)
+        if quantity_requested > group_size_allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Group size exceeds allowed limit ({group_size_allowed})",
+            )
+    else:
+        if booking.group_members and len(booking.group_members) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Single pass cannot include multiple group members",
+            )
+
+    available_quantity = pass_.get("available_quantity", 0)
+    if available_quantity < quantity_requested:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only {available_quantity} passes are available",
+        )
+
+    amount = pass_["price"] * quantity_requested
+    zone_id = str(pass_.get("zone_id"))
+
+    if not getattr(booking, "discount_applied", None) and pass_.get("pricing_rules"):
+        for rule in pass_["pricing_rules"]:
+            valid_until = rule.get("valid_until")
+            if valid_until and now <= valid_until:
+                if rule.get("discount_percentage"):
+                    amount -= amount * (rule["discount_percentage"] / 100)
+                elif rule.get("fixed_price") and rule["fixed_price"] > 0:
+                    amount = rule["fixed_price"] * quantity_requested
+
+    if getattr(booking, "discount_applied", None):
         discount = await db["discounts"].find_one({
             "$or": [
-                {"assigned_to": str(current_user.id)},
-                {"zone_id": booking.zone_id}
+                {"assigned_to": str(current_user["_id"])},
+                {"zone_id": zone_id},
             ],
             "is_active": True,
-            "expiry": {"$gt": datetime.utcnow()},
+            "expiry": {"$gt": now},
         })
 
         if not discount or discount["percentage"] < booking.discount_applied:
@@ -43,15 +96,18 @@ async def create_booking_controller(
 
         await db["discounts"].update_one(
             {"_id": discount["_id"]},
-            {"$inc": {"times_used": 1}, "$addToSet": {"used_by": str(current_user.id)}}
+            {"$inc": {"times_used": 1}, "$addToSet": {"used_by": str(current_user["_id"])}}
         )
 
-    booking_dict = booking.dict()
+    booking_dict = booking.dict(exclude={"is_group"})
     booking_dict["_id"] = ObjectId()
+    booking_dict["is_group"] = booking_is_group
+    booking_dict["user_id"] = str(current_user["_id"])
+    booking_dict["pass_id"] = str(pass_id)
+    booking_dict["zone_id"] = zone_id
     booking_dict["amount_paid"] = amount
+    booking_dict["status"] = "active"
     booking_dict["created_at"] = datetime.utcnow()
-    booking_dict["user_id"] = current_user.id
-    booking_dict["zone_id"] = booking.zone_id
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
     qr.add_data(str(booking_dict["_id"]))
     qr.make(fit=True)
@@ -62,34 +118,49 @@ async def create_booking_controller(
     booking_dict["qr_code"] = base64.b64encode(buffered.getvalue()).decode()
 
     booking = await db["bookings"].insert_one(booking_dict)
+    await db["passes"].update_one(
+        {"_id": ObjectId(pass_id)},
+        {"$inc": {"available_quantity": -quantity_requested}},
+    )
     if booking.inserted_id:
         return JSONResponse({"message": "Booking created successfully"})
     else:
         return JSONResponse({"message": "Booking creation failed"})
 
+
 async def get_booking_controller(
     booking_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
 
-    booking = await db["bookings"].find_one({"_id": ObjectId(booking_id)})
+    try:
+        booking = await db["bookings"].find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid booking ID format"
+        )
 
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Check if user owns the booking or is staff/admin
     if str(booking["user_id"]) != str(current_user.id) and current_user.role not in [
         "staff",
         "admin",
     ]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    return Booking(**booking)
+    return serialize_doc(booking)
+
 
 async def cancel_booking_controller(
     booking_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
 
-    booking = await db["bookings"].find_one({"_id": ObjectId(booking_id)})
+    try:
+        booking = await db["bookings"].find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid booking ID format"
+        )
 
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -113,6 +184,7 @@ async def cancel_booking_controller(
     else:
         return JSONResponse({"message": "Booking cancellation failed"})
 
+
 async def get_user_bookings_controller(
     user_id: str, current_user: UserInDB = Depends(get_current_user)
 ):
@@ -120,7 +192,6 @@ async def get_user_bookings_controller(
     if user_id != str(current_user.id) and current_user.role not in ["staff", "admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-
     bookings = await db["bookings"].find({"user_id": user_id}).to_list(None)
 
-    return bookings
+    return serialize_list(bookings)

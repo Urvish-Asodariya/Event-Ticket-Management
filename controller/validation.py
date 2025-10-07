@@ -2,9 +2,9 @@ from fastapi import HTTPException
 from bson import ObjectId
 from typing import Dict
 from utils.mongodb import db
+from utils.serializers import serialize_doc
 from models.user import UserInDB
 from models.booking import BookingStatus
-from datetime import datetime
 
 async def validate_qr_controller(qr_code: str, current_user: UserInDB) -> Dict:
     if current_user.role not in ["staff", "admin"]:

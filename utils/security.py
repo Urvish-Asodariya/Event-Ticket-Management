@@ -7,6 +7,8 @@ from fastapi.security import APIKeyHeader
 from fastapi import HTTPException, status, Depends
 from utils.mongodb import db
 from bson import ObjectId
+from .serializers import serialize_doc
+from models.user import UserInDB
 
 oauth2_scheme = APIKeyHeader(name="Authorization")
 
@@ -90,4 +92,5 @@ async def check_admin_user(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to perform this action",
         )
-    return current_user
+    serialized_user = serialize_doc(current_user)
+    return UserInDB(**serialized_user)

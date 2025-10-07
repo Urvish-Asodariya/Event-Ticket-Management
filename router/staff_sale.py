@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, status, Request, HTTPException, Depends
 from typing import List
 
 from models.user import UserInDB
@@ -14,15 +14,44 @@ router = APIRouter()
 
 
 @router.post("/verify-booking/{booking_id}")
-async def verify_booking(booking_id: str, current_user: UserInDB = Depends(get_current_user)):
-    return await verify_booking_controller(booking_id, current_user)
+async def verify_booking(
+    booking_id: str, current_user: UserInDB = Depends(get_current_user)
+):
+    try:
+        return await verify_booking_controller(booking_id, current_user)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Unexpected  error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
 
 
 @router.get("/sales", response_model=List[StaffSale])
 async def get_staff_sales(current_user: UserInDB = Depends(get_current_user)):
-    return await get_staff_sales_controller(current_user)
+    try:
+        return await get_staff_sales_controller(current_user)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Unexpected  error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
 
 
 @router.get("/active-discounts")
 async def get_staff_discounts(current_user: UserInDB = Depends(get_current_user)):
-    return await get_staff_discounts_controller(current_user)
+    try:
+        return await get_staff_discounts_controller(current_user)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Unexpected  error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )

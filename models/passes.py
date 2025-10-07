@@ -32,8 +32,7 @@ class PassBase(BaseModel):
     zone_id: Optional[str] = None 
 
 class PassCreate(PassBase):
-    created_by: str
-    zone_id: str
+    pass
 
 class PassInDB(PassBase):
     id: str = Field(..., alias="_id")

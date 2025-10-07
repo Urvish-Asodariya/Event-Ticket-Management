@@ -47,6 +47,9 @@ class UserLogin(BaseModel):
     email: str 
     password: str
 
-class OTPVerify(BaseModel):
+class OTPRequest(BaseModel):
+    phone: str
+
+class OTPVerifyRequest(BaseModel):
     phone: str
     otp_code: str

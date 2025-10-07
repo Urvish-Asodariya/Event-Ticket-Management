@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     SMTP_USERNAME: str = os.environ.get("SMTP_USERNAME")
     SMTP_PASSWORD: str = os.environ.get("SMTP_PASSWORD")
     FROM_EMAIL: str = os.environ.get("FROM_EMAIL")
+    ACCOUNT_SID: str = os.environ.get("ACCOUNT_SID")
+    AUTH_TOKEN: str = os.environ.get("AUTH_TOKEN")
+    TWILIO_SERVICE_SID: str = os.environ.get("TWILIO_SERVICE_SID")
 
     @validator("BACKEND_CORS_ORIGINS", pre=True, allow_reuse=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
