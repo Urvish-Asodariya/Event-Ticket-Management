@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     ACCOUNT_SID: str = os.environ.get("ACCOUNT_SID")
     AUTH_TOKEN: str = os.environ.get("AUTH_TOKEN")
     TWILIO_SERVICE_SID: str = os.environ.get("TWILIO_SERVICE_SID")
+    RAZORPAY_KEY_ID: str = os.environ.get("RAZORPAY_KEY_ID")
+    RAZORPAY_KEY_SECRET: str = os.environ.get("RAZORPAY_KEY_SECRET")
 
     @validator("BACKEND_CORS_ORIGINS", pre=True, allow_reuse=True)
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:

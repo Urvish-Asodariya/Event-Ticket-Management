@@ -8,6 +8,7 @@ from controller.bookings import (
     get_booking_controller,
     cancel_booking_controller,
     get_user_bookings_controller,
+    get_user_own_bookings_controller
 )
 
 router = APIRouter()
@@ -72,6 +73,22 @@ async def get_user_bookings(
 ):
     try:
         return await get_user_bookings_controller(user_id, current_user)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Unexpected  error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+
+@router.get("/user/own", response_model=List[Booking])
+async def get_user_own_bookings(
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await get_user_own_bookings_controller(current_user)
     except HTTPException as e:
         raise e
     except Exception as e:

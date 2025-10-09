@@ -12,6 +12,9 @@ import base64
 from utils.serializers import serialize_doc, serialize_list
 from datetime import datetime
 from io import BytesIO
+from utils.payment_service import PaymentService
+
+payment_service = PaymentService()
 
 
 async def create_booking_controller(
@@ -20,7 +23,11 @@ async def create_booking_controller(
     current_user: UserInDB = Depends(get_current_user),
 ):
 
-    pass_ = await db["passes"].find_one({"_id": ObjectId(pass_id)})
+    try:
+        pass_ = await db["passes"].find_one({"_id": ObjectId(pass_id)})
+    except:
+        raise HTTPException(status_code=400, detail="Invalid pass ID format")
+
     if not pass_:
         raise HTTPException(status_code=404, detail="Pass not found")
 
@@ -28,7 +35,6 @@ async def create_booking_controller(
         raise HTTPException(status_code=400, detail="Pass is inactive")
 
     now = datetime.utcnow()
-    validity_start = pass_.get("validity_start")
     validity_end = pass_.get("validity_end")
 
     if validity_end and now > validity_end:
@@ -77,17 +83,21 @@ async def create_booking_controller(
                     amount = rule["fixed_price"] * quantity_requested
 
     if getattr(booking, "discount_applied", None):
-        discount = await db["discounts"].find_one({
-            "$or": [
-                {"assigned_to": str(current_user["_id"])},
-                {"zone_id": zone_id},
-            ],
-            "is_active": True,
-            "expiry": {"$gt": now},
-        })
+        discount = await db["discounts"].find_one(
+            {
+                "$or": [
+                    {"assigned_to": str(current_user["_id"])},
+                    {"zone_id": zone_id},
+                ],
+                "is_active": True,
+                "expiry": {"$gt": now},
+            }
+        )
 
         if not discount or discount["percentage"] < booking.discount_applied:
-            raise HTTPException(status_code=403, detail="Invalid or unauthorized discount")
+            raise HTTPException(
+                status_code=403, detail="Invalid or unauthorized discount"
+            )
 
         discount_value = amount * (booking.discount_applied / 100)
         if discount.get("max_limit") and discount_value > discount["max_limit"]:
@@ -96,36 +106,69 @@ async def create_booking_controller(
 
         await db["discounts"].update_one(
             {"_id": discount["_id"]},
-            {"$inc": {"times_used": 1}, "$addToSet": {"used_by": str(current_user["_id"])}}
+            {
+                "$inc": {"times_used": 1},
+                "$addToSet": {"used_by": str(current_user["_id"])},
+            },
+        )
+    try:
+        order_info = payment_service.create_razorpay_order(
+            username=current_user["name"],
+            email=current_user["email"],
+            product=pass_["name"],
+            amount=amount,
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print("Unexpected payment error:", e)
+        raise HTTPException(status_code=500, detail="Failed to create payment order")
+
+    if order_info and order_info.get("order_id"):
+        booking_dict = booking.dict(exclude={"is_group"})
+        booking_dict["_id"] = ObjectId()
+        booking_dict["is_group"] = booking_is_group
+        booking_dict["user_id"] = str(current_user["_id"])
+        booking_dict["pass_id"] = str(pass_id)
+        booking_dict["zone_id"] = zone_id
+        booking_dict["amount_paid"] = amount
+        booking_dict["status"] = "pending_payment"
+        booking_dict["razorpay_order_id"] = order_info["order_id"]
+        booking_dict["created_at"] = datetime.utcnow()
+
+        try:
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(str(booking_dict["_id"]))
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+
+            buffered = BytesIO()
+            qr_img.save(buffered, format="PNG")
+            booking_dict["qr_code"] = base64.b64encode(buffered.getvalue()).decode()
+        except Exception as e:
+            print("Warning: QR generation failed:", e)
+            booking_dict["qr_code"] = None
+
+        booking_result = await db["bookings"].insert_one(booking_dict)
+        await db["passes"].update_one(
+            {"_id": ObjectId(pass_id)},
+            {"$inc": {"available_quantity": -quantity_requested}},
         )
 
-    booking_dict = booking.dict(exclude={"is_group"})
-    booking_dict["_id"] = ObjectId()
-    booking_dict["is_group"] = booking_is_group
-    booking_dict["user_id"] = str(current_user["_id"])
-    booking_dict["pass_id"] = str(pass_id)
-    booking_dict["zone_id"] = zone_id
-    booking_dict["amount_paid"] = amount
-    booking_dict["status"] = "active"
-    booking_dict["created_at"] = datetime.utcnow()
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(str(booking_dict["_id"]))
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
+        if booking_result.inserted_id:
+            return JSONResponse(
+                {
+                    "message": "Booking created successfully",
+                    "order_id": order_info["order_id"],
+                    "amount": order_info["amount"],
+                    "currency": order_info["currency"],
+                    "booking_id": str(booking_dict["_id"]),
+                }
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Booking creation failed")
 
-    buffered = BytesIO()
-    qr_img.save(buffered, format="PNG")
-    booking_dict["qr_code"] = base64.b64encode(buffered.getvalue()).decode()
-
-    booking = await db["bookings"].insert_one(booking_dict)
-    await db["passes"].update_one(
-        {"_id": ObjectId(pass_id)},
-        {"$inc": {"available_quantity": -quantity_requested}},
-    )
-    if booking.inserted_id:
-        return JSONResponse({"message": "Booking created successfully"})
-    else:
-        return JSONResponse({"message": "Booking creation failed"})
+    raise HTTPException(status_code=400, detail="Payment order generation failed")
 
 
 async def get_booking_controller(
@@ -152,37 +195,125 @@ async def get_booking_controller(
 
 
 async def cancel_booking_controller(
-    booking_id: str, current_user: UserInDB = Depends(get_current_user)
+    booking_id: str,
+    current_user: UserInDB = Depends(get_current_user),
 ):
-
     try:
         booking = await db["bookings"].find_one({"_id": ObjectId(booking_id)})
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid booking ID format"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid booking ID format",
         )
 
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Check if user owns the booking or is admin
-    if str(booking["user_id"]) != str(current_user.id) and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    # Check if booking can be cancelled
-    if booking["status"] != "active":
+    user_id_str = str(current_user["_id"])
+    if (
+        str(booking.get("user_id")) != user_id_str
+        and getattr(current_user, "role", None) != "admin"
+    ):
         raise HTTPException(
-            status_code=400, detail="Only active bookings can be cancelled"
+            status_code=403, detail="Not authorized to cancel this booking"
         )
 
-    result = await db["bookings"].update_one(
-        {"_id": ObjectId(booking_id)}, {"$set": {"status": "cancelled"}}
-    )
+    if booking.get("status") != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="Only active bookings can be cancelled",
+        )
 
-    if result.modified_count == 1:
-        return JSONResponse({"message": "Booking cancelled successfully"})
+    payment_status = booking.get("payment_status")
+    payment_id = booking.get("payment_id")
+    amount_paid = float(booking.get("amount_paid", 0.0))
+
+    if booking.get("is_group"):
+        quantity_to_restore = len(booking.get("group_members", []) or [])
+        if quantity_to_restore == 0:
+            quantity_to_restore = 1
     else:
-        return JSONResponse({"message": "Booking cancellation failed"})
+        quantity_to_restore = 1
+
+    if payment_status != "paid" or not payment_id or amount_paid <= 0:
+        update_result = await db["bookings"].update_one(
+            {"_id": ObjectId(booking_id)},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "refund_status": "none",
+                    "refund_amount": 0,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+
+        await db["passes"].update_one(
+            {"_id": ObjectId(booking["pass_id"])},
+            {"$inc": {"available_quantity": quantity_to_restore}},
+        )
+
+        if update_result.modified_count == 1:
+            return JSONResponse({"message": "Booking cancelled (no payment to refund)"})
+        else:
+            raise HTTPException(status_code=500, detail="Booking cancellation failed")
+
+    try:
+        notes = {
+            "booking_id": str(booking_id),
+            "user_id": str(booking.get("user_id")),
+        }
+
+        refund_resp = await payment_service.create_razorpay_refund(
+            payment_id=payment_id,
+            amount_float=amount_paid,
+            notes=notes,
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Refund attempt failed: {str(e)}")
+
+    if refund_resp and refund_resp.get("id"):
+        refund_id = refund_resp["id"]
+        refund_status = refund_resp.get("status", "processed")
+        refunded_amount_paise = refund_resp.get("amount", int(round(amount_paid * 100)))
+        refunded_amount = refunded_amount_paise / 100.0
+
+        update_fields = {
+            "status": "cancelled",
+            "refund_status": refund_status,
+            "refund_amount": refunded_amount,
+            "refund_id": refund_id,
+            "updated_at": datetime.utcnow(),
+        }
+
+        result = await db["bookings"].update_one(
+            {"_id": ObjectId(booking_id)},
+            {"$set": update_fields},
+        )
+
+        await db["passes"].update_one(
+            {"_id": ObjectId(booking["pass_id"])},
+            {"$inc": {"available_quantity": quantity_to_restore}},
+        )
+
+        if result.modified_count == 1:
+            return JSONResponse(
+                {
+                    "message": "Booking cancelled and refunded successfully",
+                    "refund_id": refund_id,
+                    "refund_status": refund_status,
+                    "refund_amount": refunded_amount,
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Refund processed but failed to update booking record. Please contact support.",
+            )
+    raise HTTPException(status_code=502, detail="Refund failed with payment gateway")
 
 
 async def get_user_bookings_controller(
@@ -192,6 +323,15 @@ async def get_user_bookings_controller(
     if user_id != str(current_user.id) and current_user.role not in ["staff", "admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    bookings = await db["bookings"].find({"user_id": user_id}).to_list(None)
+
+    return serialize_list(bookings)
+
+
+async def get_user_own_bookings_controller(
+    current_user: UserInDB = Depends(get_current_user),
+):
+    user_id = str(current_user.id)
     bookings = await db["bookings"].find({"user_id": user_id}).to_list(None)
 
     return serialize_list(bookings)

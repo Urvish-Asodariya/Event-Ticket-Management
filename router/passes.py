@@ -8,8 +8,7 @@ from controller.passes import (
     create_group_pass_controller,
     update_pass_controller,
     delete_pass_controller,
-    deactivate_pass_controller,
-    activate_pass_controller,
+    toggle_pass_controller
 )
 from models.passes import PassCreate, PassUpdate, Pass
 from models.user import UserInDB
@@ -114,32 +113,16 @@ async def delete_pass(pass_id: str, current_user: UserInDB = Depends(check_admin
         )
 
 
-@router.put("/deactivate/{pass_id}")
-async def deactivate_pass(
+@router.put("/toggle/{pass_id}")
+async def toggle_pass(
     pass_id: str, current_user: UserInDB = Depends(check_admin_user)
 ):
     try:
-        return await deactivate_pass_controller(pass_id, current_user)
+        return await toggle_pass_controller(pass_id)
     except HTTPException as e:
         raise e
     except Exception as e:
-        print(f"Unexpected  error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error",
-        )
-
-
-@router.put("/activate/{pass_id}")
-async def activate_pass(
-    pass_id: str, current_user: UserInDB = Depends(check_admin_user)
-):
-    try:
-        return await activate_pass_controller(pass_id, current_user)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        print(f"Unexpected  error: {e}")
+        print(f"Unexpected error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

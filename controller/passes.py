@@ -46,7 +46,7 @@ async def create_pass_controller(
 
 
 async def create_group_pass_controller(
-    pass_: PassCreate, zone_id: Optional[str] = None
+    current_admin: UserInDB, pass_: PassCreate, zone_id: Optional[str] = None
 ) -> JSONResponse:
     if not pass_.group_size or pass_.group_size < 2:
         raise HTTPException(status_code=400, detail="Group size must be at least 2")
@@ -57,6 +57,7 @@ async def create_group_pass_controller(
     pass_dict["created_at"] = datetime.utcnow()
     pass_dict["is_active"] = True
     pass_dict["zone_id"] = zone_id
+    pass_dict["created_by"] = str(current_admin.id)
     result = await db.passes.insert_one(pass_dict)
     if result.inserted_id:
         return JSONResponse({"message": "Group Pass created successfully"})
@@ -93,30 +94,31 @@ async def delete_pass_controller(pass_id: str) -> JSONResponse:
     return JSONResponse({"message": "Pass deleted successfully"})
 
 
-async def deactivate_pass_controller(pass_id: str) -> dict:
+async def toggle_pass_controller(pass_id: str) -> dict:
     try:
-        result = await db.passes.update_one(
-            {"_id": ObjectId(pass_id)},
-            {"$set": {"is_active": False, "deactivated_at": datetime.utcnow()}},
-        )
+        pass_doc = await db.passes.find_one({"_id": ObjectId(pass_id)})
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid pass ID format"
         )
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Pass not found")
-    return {"message": "Pass deactivated successfully"}
 
-
-async def activate_pass_controller(pass_id: str) -> dict:
-    try:
-        result = await db.passes.update_one(
-            {"_id": ObjectId(pass_id)}, {"$set": {"is_active": True}}
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid pass ID format"
-        )
-    if result.modified_count == 0:
+    if not pass_doc:
         raise HTTPException(status_code=404, detail="Pass not found")
-    return {"message": "Pass activated successfully"}
+
+    new_status = not pass_doc.get("is_active", False)
+    update_data = {"is_active": new_status}
+
+    if not new_status:
+        update_data["deactivated_at"] = datetime.utcnow()
+    else:
+        update_data["deactivated_at"] = None
+
+    result = await db.passes.update_one(
+        {"_id": ObjectId(pass_id)}, {"$set": update_data}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to toggle pass status")
+
+    status_str = "activated" if new_status else "deactivated"
+    return {"message": f"Pass {status_str} successfully"}

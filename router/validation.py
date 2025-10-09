@@ -9,7 +9,7 @@ from controller.validation import (
 router = APIRouter()
 
 
-@router.post("/validate-qr")
+@router.post("/validate-qr/{qr_code}")
 async def validate_qr(qr_code: str, current_user: UserInDB = Depends(get_current_user)):
     try:
         return await validate_qr_controller(qr_code, current_user)
